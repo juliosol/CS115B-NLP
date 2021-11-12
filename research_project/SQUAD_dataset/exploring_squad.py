@@ -1,0 +1,159 @@
+import json
+
+f = open('train-v2.0.json','r')
+
+data = json.load(f)
+
+## Extracting context for one topic
+
+current_idx = 0 # INteger in range 0 to 442
+current_topic = data['data'][current_idx]['title']
+
+print(f"Considering the context of topic {current_topic}")
+
+complete_text = ''
+
+for text_num in range(len(data['data'][current_idx]['paragraphs'])):
+    complete_text += data['data'][current_idx]['paragraphs'][text_num]['context']
+
+import pandas as pd
+import re
+import spacy
+import neuralcoref
+
+nlp = spacy.load('en_core_web_lg')
+neuralcoref.add_to_pipe(nlp)
+
+def filter_spans(spans):
+    # Filter a sequence of spans so they don't contain overlaps
+    # For spaCy 2.1.4+: this function is available as spacy.util.filter_spans()
+    get_sort_key = lambda span: (span.end - span.start, -span.start)
+    sorted_spans = sorted(spans, key=get_sort_key, reverse=True)
+    result = []
+    seen_tokens = set()
+    for span in sorted_spans:
+        # Check for end - 1 here because boundaries are inclusive
+        if span.start not in seen_tokens and span.end - 1 not in seen_tokens:
+            result.append(span)
+        seen_tokens.update(range(span.start, span.end))
+    result = sorted(result, key=lambda span: span.start)
+    return result
+
+def get_entity_pairs(text, coref=True):
+    # preprocess Text
+    text = re.sub(r'\n+', '.', text)
+    text = re.sub(r'\[\d+\]', ' ', text)
+    text = nlp(text)
+    if coref:
+        text = nlp(text._.coref_resolved)  # resolve coreference clusters
+
+    def refine_ent(ent, sent):
+        unwanted_tokens = (
+            'PRON',  # pronouns
+            'PART',  # particle
+            'DET',  # determiner
+            'SCONJ',  # subordinating conjunction
+            'PUNCT',  # punctuation
+            'SYM',  # symbol
+            'X',  # other
+        )
+        ent_type = ent.ent_type_  # get entity type
+        if ent_type == '':
+            ent_type = 'NOUN_CHUNK'
+            ent = ' '.join(str(t.text) for t in
+                           nlp(str(ent)) if t.pos_
+                           not in unwanted_tokens and t.is_stop == False)
+        elif ent_type in ('NOMINAL', 'CARDINAL', 'ORDINAL') and str(ent).find(' ') == -1:
+            refined = ''
+            for i in range(len(sent) - ent.i):
+                if ent.nbor(i).pos_ not in ('VERB', 'PUNCT'):
+                    refined += ' ' + str(ent.nbor(i))
+                else:
+                    ent = refined.strip()
+                    break
+
+        return ent, ent_type
+
+    sentences = [sent.string.strip() for sent in text.sents]  # split text into sentences
+    ent_pairs = []
+    for sent in sentences:
+        sent = nlp(sent)
+        spans = list(sent.ents) + list(sent.noun_chunks)  # collect nodes
+        spans = filter_spans(spans)
+        with sent.retokenize() as retokenizer:
+            [retokenizer.merge(span, attrs={'tag': span.root.tag,
+                                            'dep': span.root.dep}) for span in spans]
+        deps = [token.dep_ for token in sent]
+
+        # limit our example to simple sentences with one subject and object
+        if (deps.count('obj') + deps.count('dobj')) != 1\
+                or (deps.count('subj') + deps.count('nsubj')) != 1:
+            continue
+
+        for token in sent:
+            if token.dep_ not in ('obj', 'dobj'):  # identify object nodes
+                continue
+            subject = [w for w in token.head.lefts if w.dep_
+                       in ('subj', 'nsubj')]  # identify subject nodes
+            if subject:
+                subject = subject[0]
+                # identify relationship by root dependency
+                relation = [w for w in token.ancestors if w.dep_ == 'ROOT']
+                if relation:
+                    relation = relation[0]
+                    # add adposition or particle to relationship
+                    if relation.nbor(1).pos_ in ('ADP', 'PART'):
+                        relation = ' '.join((str(relation), str(relation.nbor(1))))
+                else:
+                    relation = 'unknown'
+
+                subject, subject_type = refine_ent(subject, sent)
+                token, object_type = refine_ent(token, sent)
+
+                ent_pairs.append([str(subject), str(relation), str(token),
+                                  str(subject_type), str(object_type)])
+
+    ent_pairs = [sublist for sublist in ent_pairs
+                          if not any(str(ent) == '' for ent in sublist)]
+    pairs = pd.DataFrame(ent_pairs, columns=['subject', 'relation', 'object',
+                                             'subject_type', 'object_type'])
+    print('Entity pairs extracted:', str(len(ent_pairs)))
+
+    return pairs
+
+
+pairs = get_entity_pairs(complete_text)
+
+pairs.head()
+
+
+import networkx as nx
+import matplotlib.pyplot as plt
+
+
+def draw_kg(pairs):
+    k_graph = nx.from_pandas_edgelist(pairs, 'subject', 'object',
+            create_using=nx.MultiDiGraph())
+    node_deg = nx.degree(k_graph)
+    layout = nx.spring_layout(k_graph, k=0.15, iterations=20)
+    plt.figure(num=None, figsize=(120, 90), dpi=80)
+    nx.draw_networkx(
+        k_graph,
+        node_size=[int(deg[1]) * 500 for deg in node_deg],
+        arrowsize=20,
+        linewidths=1.5,
+        pos=layout,
+        edge_color='red',
+        edgecolors='black',
+        node_color='white',
+        )
+    labels = dict(zip(list(zip(pairs.subject, pairs.object)),
+                  pairs['relation'].tolist()))
+    nx.draw_networkx_edge_labels(k_graph, pos=layout, edge_labels=labels,
+                                 font_color='red')
+    plt.axis('off')
+    plt.show()
+
+draw_kg(pairs)
+
+    
