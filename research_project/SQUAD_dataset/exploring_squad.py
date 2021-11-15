@@ -21,7 +21,10 @@ import re
 import spacy
 import neuralcoref
 
-nlp = spacy.load('en_core_web_lg')
+import en_core_web_lg
+
+#nlp = spacy.load('en_core_web_lg')
+nlp = en_core_web_lg.load()
 neuralcoref.add_to_pipe(nlp)
 
 def filter_spans(spans):
@@ -80,9 +83,15 @@ def get_entity_pairs(text, coref=True):
         sent = nlp(sent)
         spans = list(sent.ents) + list(sent.noun_chunks)  # collect nodes
         spans = filter_spans(spans)
+        import pdb
+        pdb.set_trace()
         with sent.retokenize() as retokenizer:
             [retokenizer.merge(span, attrs={'tag': span.root.tag,
                                             'dep': span.root.dep}) for span in spans]
+
+        import pdb
+        pdb.set_trace()
+
         deps = [token.dep_ for token in sent]
 
         # limit our example to simple sentences with one subject and object
@@ -125,6 +134,9 @@ def get_entity_pairs(text, coref=True):
 pairs = get_entity_pairs(complete_text)
 
 pairs.head()
+
+import pdb
+pdb.set_trace()
 
 
 import networkx as nx
