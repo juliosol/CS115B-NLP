@@ -16,6 +16,15 @@ complete_text = ''
 for text_num in range(len(data['data'][current_idx]['paragraphs'])):
     complete_text += data['data'][current_idx]['paragraphs'][text_num]['context']
 
+
+
+text_file = open("squad_sample.txt", "w")
+n = text_file.write(complete_text)
+text_file.close()
+
+import pdb
+pdb.set_trace()
+
 import pandas as pd
 import re
 import spacy
@@ -83,14 +92,9 @@ def get_entity_pairs(text, coref=True):
         sent = nlp(sent)
         spans = list(sent.ents) + list(sent.noun_chunks)  # collect nodes
         spans = filter_spans(spans)
-        import pdb
-        pdb.set_trace()
         with sent.retokenize() as retokenizer:
             [retokenizer.merge(span, attrs={'tag': span.root.tag,
                                             'dep': span.root.dep}) for span in spans]
-
-        import pdb
-        pdb.set_trace()
 
         deps = [token.dep_ for token in sent]
 
@@ -121,6 +125,10 @@ def get_entity_pairs(text, coref=True):
 
                 ent_pairs.append([str(subject), str(relation), str(token),
                                   str(subject_type), str(object_type)])
+
+    import pdb
+    pdb.set_trace()
+
 
     ent_pairs = [sublist for sublist in ent_pairs
                           if not any(str(ent) == '' for ent in sublist)]
